@@ -87,4 +87,6 @@ void Application::onFrame() {
 }
 ```
 
+**NB** This is a **static** library, meaning that after compilation this code is exactly the same as above (more or less).
+
 Of course there is also some boilerplate for defining the dependencies between the different resources, it's not that magic. ;) See [`example/main.cpp`](example/main.cpp) to see how *StatDeps* addresses this issue!
