@@ -1,9 +1,9 @@
-Depsgraph
-=========
+StatDeps - Static Dependency Graph
+==================================
 
-*A lightweight dependency graph library for dependent resource management.*
+*A lightweight C++ dependency graph library for compile-time dependent resource management.*
 
-This is an excerpt from a code base that **needs to use a depsgraph**:
+This is an excerpt from a code base that **needs to use a dependency graph**:
 
 ```C++
 void Application::onInit() {
