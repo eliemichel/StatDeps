@@ -8,7 +8,64 @@
 
 namespace statdeps {
 
-// Declarations (public)
+////////////////////////////////////////////////////
+#pragma region [Declarations, list operations (public)]
+
+/**
+ * Run a callback for each element of a list
+ */
+template <typename... Items, typename Lambda>
+constexpr void forEach(List<Items...>, Lambda callback) noexcept;
+
+/**
+ * Basic operations on lists
+ */
+template <typename NewItem, typename... Items>
+constexpr auto prepend(NewItem, List<Items...>) noexcept;
+
+template <typename NewItem, typename... Items>
+constexpr auto append(List<Items...>, NewItem) noexcept;
+
+template <typename... Items, typename... OtherItems>
+constexpr auto concat(List<Items...>, List<OtherItems...>) noexcept;
+
+#pragma endregion
+
+////////////////////////////////////////////////////
+#pragma region [Declarations, depsnode operations (public)]
+
+/**
+ * Higher-level function around the DepsNode API, which picks either Exists()
+ * or ReadyState() depending on which one is available.
+ */
+
+/**
+ * Returns whether the resource corresponding to a dependency node has been
+ * created (and not destroyed since then). This uses ReadyState if available,
+ * otherwise it uses Exists(). And if none of them is available, it returns the
+ * default value.
+ */
+template <typename Context, typename Node>
+constexpr bool doesResourceExist(Context& ctx, Node, bool defaultValue);
+
+/**
+ * Create the resource corresponding to a dependency node, if it does not
+ * already exist, and update the ready state if appropriate.
+ */
+template <typename Context, typename Node>
+constexpr void createResource(Context& ctx, Node);
+
+/**
+ * Destroy the resource corresponding to a dependency node if exists, and
+ * update the ready state if appropriate.
+ */
+template <typename Context, typename Node>
+constexpr void destroyResource(Context& ctx, Node);
+
+#pragma endregion
+
+////////////////////////////////////////////////////
+#pragma region [Declarations, depsgraph operations (public)]
 
 /**
  * Ensure that teh resource corresponding to the provided dependency node has
@@ -26,12 +83,123 @@ template <typename Context, typename Node, typename Graph>
 constexpr void rebuild(typename Context& ctx, Node, Graph) noexcept;
 
 /**
+ * Get all nodes on which the given node depends, be it directly or indirectly.
+ * Returned nodes are sorted by dependency order (the first one depends on nothing).
+ */
+template <typename Node, typename Graph>
+constexpr auto allDependencies(Node, Graph) noexcept;
+
+/**
+ * Get all nodes that depend directly or indirectly on a given one.
+ * Returned nodes are sorted by dependency order (the first one depends
+ * directly on the given node).
+ */
+template <typename Node, typename Graph>
+constexpr auto allDependees(Node, Graph) noexcept;
+
+/**
  * Mostly for debug: list in the stdout the dependencies of a node.
  */
 template <typename Node, typename Graph>
 constexpr void printDependencies(Node, Graph) noexcept;
 
-// Definitions (private)
+#pragma endregion
+
+////////////////////////////////////////////////////
+#pragma region [Definitions, list operations (private)]
+
+// forEachInList()
+
+template <typename FirstItem, typename... OtherItems, typename Lambda>
+constexpr void forEach(List<FirstItem, OtherItems...>, Lambda lambda) noexcept {
+	lambda(FirstItem{});
+	forEach(List<OtherItems...>{}, lambda);
+}
+
+template <typename Lambda>
+constexpr void forEach(List<>, Lambda) noexcept {
+}
+
+// prepend()
+
+template <typename NewItem, typename... Items>
+constexpr auto prepend(NewItem, List<Items...>) noexcept {
+	return List<NewItem, Items...>{};
+}
+
+// append()
+
+template <typename NewItem, typename... Items>
+constexpr auto append(List<Items...>, NewItem) noexcept {
+	return List<NewItem, Items...>{};
+}
+
+// concat()
+
+template <typename... Items, typename... OtherItems>
+constexpr auto concat(List<Items...>, List<OtherItems...>) noexcept {
+	return List<Items..., OtherItems...>{};
+}
+
+#pragma endregion
+
+////////////////////////////////////////////////////
+#pragma region [Definitions, node operations (private)]
+
+template <typename Context, typename Node>
+constexpr bool doesResourceExist(Context& ctx, Node, bool defaultValue) {
+	if constexpr (Node::UseReadyState()) {
+		return Node::ReadyState(ctx);
+	}
+	else if constexpr (Node::UseExists()) {
+		return Node::Exists(ctx);
+	}
+	else {
+		return defaultValue;
+	}
+}
+
+template <typename Context, typename Node>
+constexpr void createResource(Context& ctx, Node) {
+	if constexpr (Node::UseReadyState()) {
+		bool& ready = Node::ReadyState(ctx);
+		if (!ready) {
+			Node::Create(ctx);
+			ready = true;
+		}
+	}
+	else if constexpr (Node::UseExists()) {
+		if (!Node::Exists(ctx)) {
+			Node::Create(ctx);
+		}
+	}
+	else {
+		Node::Create(ctx);
+	}
+}
+
+template <typename Context, typename Node>
+constexpr void destroyResource(Context& ctx, Node) {
+	if constexpr (Node::UseReadyState()) {
+		bool& ready = Node::ReadyState(ctx);
+		if (ready) {
+			Node::Destroy(ctx);
+			ready = false;
+		}
+	}
+	else if constexpr (Node::UseExists()) {
+		if (Node::Exists(ctx)) {
+			Node::Destroy(ctx);
+		}
+	}
+	else {
+		Node::Destroy(ctx);
+	}
+}
+#pragma endregion
+
+////////////////////////////////////////////////////
+#pragma region [Definitions, depsgraph operations (private)]
 
 // ensureExists()
 
@@ -75,94 +243,73 @@ constexpr void ensureDependenciesExist(typename Context& ctx, Node, Graph, List<
 
 template <typename Context, typename Node, typename Graph>
 constexpr void rebuild(typename Context& ctx, Node, Graph) noexcept {
-	destroyDependees(ctx, Node{}, Graph{}, Graph::EdgeList{});
-
-	if constexpr (Node::UseReadyState()) {
-		bool& ready = Node::ReadyState(ctx);
-		if (ready) {
-			Node::Destroy(ctx);
-			ready = false;
-		}
-	}
-	else if constexpr(Node::UseExists()) {
-		if (Node::Exists(ctx)) {
-			Node::Destroy(ctx);
-		}
-	}
-	else {
-		Node::Destroy(ctx);
-	}
-
-	Node::Create(ctx);
-
-	// TODO: Make sure to only recreate dependees that were existing before
-	createDependees(ctx, Node{}, Graph{}, Graph::EdgeList{});
+	rebuild(ctx, Node{}, Graph{}, allDependees(Node{}, Graph{}));
 }
 
-template <typename Context, typename Node, typename Graph, typename Dependee, typename... OtherEdges>
-constexpr void destroyDependees(typename Context& ctx, Node, Graph, List<DepsEdge<Dependee, Node>, OtherEdges...>) noexcept {
-	// Destroy dependees of dependees
-	destroyDependees(ctx, Dependee{}, Graph{}, typename Graph::EdgeList{});
+template <typename Context, typename Node, typename Graph, typename FirstDependee, typename... OtherDependees>
+constexpr void rebuild(typename Context& ctx, Node, Graph, List<FirstDependee, OtherDependees...>) noexcept {
+	bool shouldRecreate = doesResourceExist(ctx, FirstDependee{}, true);
+	destroyResource(ctx, FirstDependee{});
+	
+	rebuild(ctx, Node{}, Graph{}, List<OtherDependees...>{});
 
-	if constexpr (Dependee::UseReadyState()) {
-		bool& ready = Dependee::ReadyState(ctx);
-		if (ready) {
-			Dependee::Destroy(ctx);
-			ready = false;
-		}
+	if (shouldRecreate) {
+		createResource(ctx, FirstDependee{});
 	}
-	else if constexpr (Node::UseExists()) {
-		if (Dependee::Exists(ctx)) {
-			Dependee::Destroy(ctx);
-			// TODO: mark as "was existing" to only rebuild what was already existing
-			// (that's what the "Z" test below is about)
-		}
-	}
-	else {
-		Dependee::Destroy(ctx);
-	}
-
-	// Destroy other dependees of the current node of interest
-	destroyDependees(ctx, Node{}, Graph{}, List<OtherEdges...>{});
-}
-
-template <typename Context, typename Node, typename Graph, typename FirstEdge, typename... OtherEdges>
-constexpr void destroyDependees(typename Context& ctx, Node, Graph, List<FirstEdge, OtherEdges...>) noexcept {
-	destroyDependees(ctx, Node{}, Graph{}, List<OtherEdges...>{});
 }
 
 template <typename Context, typename Node, typename Graph>
-constexpr void destroyDependees(typename Context& ctx, Node, Graph, List<>) noexcept {
+constexpr void rebuild(typename Context& ctx, Node, Graph, List<>) noexcept {
+	destroyResource(ctx, Node{});
+	createResource(ctx, Node{});
 }
 
-template <typename Context, typename Node, typename Graph, typename Dependee, typename... OtherEdges>
-constexpr void createDependees(typename Context& ctx, Node, Graph, List<DepsEdge<Dependee, Node>, OtherEdges...>) noexcept {
-	if constexpr (Dependee::UseReadyState()) {
-		bool& ready = Dependee::ReadyState(ctx);
-		if (!ready) {
-			Dependee::Create(ctx);
-			ready = true;
-		}
-	}
-	else if constexpr (Node::UseExists()) {
-		if (!Dependee::Exists(ctx)) {
-			Dependee::Create(ctx);
-		}
-	}
-	else {
-		Dependee::Create(ctx);
-	}
-	createDependees(ctx, Dependee{}, Graph{}, typename Graph::EdgeList{});
-	createDependees(ctx, Node{}, Graph{}, List<OtherEdges...>{});
+// allDependencies()
+
+template <typename Node, typename Graph>
+constexpr auto allDependencies(Node, Graph) noexcept {
+	return allDependencies(Node{}, Graph{}, Graph::EdgeList{});
 }
 
-template <typename Context, typename Node, typename Graph, typename FirstEdge, typename... OtherEdges>
-constexpr void createDependees(typename Context& ctx, Node, Graph, List<FirstEdge, OtherEdges...>) noexcept {
-	createDependees(ctx, Node{}, Graph{}, List<OtherEdges...>{});
+template <typename Node, typename Graph, typename Dependency, typename... OtherEdges>
+constexpr auto allDependencies(Node, Graph, List<DepsEdge<Node, Dependency>, OtherEdges...>) noexcept {
+	auto otherDependencies = allDependencies(Node{}, Graph{}, List<OtherEdges...>{});
+	auto dependenciesOfDependencies = allDependencies(Dependency{}, Graph{});
+	return concat(dependenciesOfDependencies, prepend(Dependency{}, otherDependencies)); // TODO
 }
 
-template <typename Context, typename Node, typename Graph>
-constexpr void createDependees(typename Context& ctx, Node, Graph, List<>) noexcept {
+template <typename Node, typename Graph, typename FirstEdge, typename... OtherEdges>
+constexpr auto allDependencies(Node, Graph, List<FirstEdge, OtherEdges...>) noexcept {
+	return allDependencies(Node{}, Graph{}, List<OtherEdges...>{});
+}
+
+template <typename Node, typename Graph>
+constexpr auto allDependencies(Node, Graph, List<>) noexcept {
+	return List<>{};
+}
+
+// allDependees()
+
+template <typename Node, typename Graph>
+constexpr auto allDependees(Node, Graph) noexcept {
+	return allDependees(Node{}, Graph{}, Graph::EdgeList{});
+}
+
+template <typename Node, typename Graph, typename Dependee, typename... OtherEdges>
+constexpr auto allDependees(Node, Graph, List<DepsEdge<Dependee, Node>, OtherEdges...>) noexcept {
+	auto otherDependees = allDependees(Node{}, Graph{}, List<OtherEdges...>{});
+	auto dependeesOfDependees = allDependees(Dependee{}, Graph{});
+	return prepend(Dependee{}, concat(dependeesOfDependees, otherDependees)); // TODO
+}
+
+template <typename Node, typename Graph, typename FirstEdge, typename... OtherEdges>
+constexpr auto allDependees(Node, Graph, List<FirstEdge, OtherEdges...>) noexcept {
+	return allDependees(Node{}, Graph{}, List<OtherEdges...>{});
+}
+
+template <typename Node, typename Graph>
+constexpr auto allDependees(Node, Graph, List<>) noexcept {
+	return List<>{};
 }
 
 // printDependencies()
@@ -188,5 +335,6 @@ template <typename Node, typename Graph>
 constexpr void printDependencies(Node, Graph, List<>) noexcept {
 }
 
+#pragma endregion
 
 } // namespace statdeps

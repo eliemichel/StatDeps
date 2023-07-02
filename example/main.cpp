@@ -53,7 +53,7 @@ void destroyTextureView(wgpu::TextureView textureView) {
 	std::cout << "Destroy texture view" << std::endl;
 }
 
-class Application2 {
+class Application {
 public:
 	void onInit();
 	void onGui();
@@ -67,12 +67,13 @@ private:
 	bool m_textureReady = false;
 	wgpu::TextureView m_textureView;
 	bool m_textureViewReady = false;
+	bool m_fakeReady = false;
 
-private:
-	using Self = Application2;
+public:
+	using Self = Application;
 	using DepsNodeBuilder = statdeps::DepsNodeBuilder::with_context<Self>;
 
-	using pathDepsNode = DepsNodeBuilder::build;
+	using PathResource = DepsNodeBuilder::build;
 
 	void createData() {
 		auto [data, size] = readImageFile(m_path);
@@ -82,7 +83,7 @@ private:
 	void destroyData() {
 		m_data.clear();
 	}
-	using dataDepsNode = DepsNodeBuilder
+	using DataResource = DepsNodeBuilder
 		::with_create<&createData>
 		::with_destroy<&destroyData>
 		::with_ready_state<&Self::m_dataReady>
@@ -95,7 +96,7 @@ private:
 	void destroyTextureA() {
 		destroyTexture(m_texture);
 	}
-	using textureDepsNode = DepsNodeBuilder
+	using TextureResource = DepsNodeBuilder
 		::with_create<&createTextureA>
 		::with_destroy<&destroyTextureA>
 		::with_ready_state<&Self::m_textureReady>
@@ -107,17 +108,26 @@ private:
 	void destroyTextureViewA() {
 		destroyTextureView(m_textureView);
 	}
-	using textureViewDepsNode = DepsNodeBuilder
+	using TextureViewResource = DepsNodeBuilder
 		::with_create<&createTextureViewA>
 		::with_destroy<&destroyTextureViewA>
 		::with_ready_state<&Self::m_textureViewReady>
 		::build;
 
+	void createFake() {
+		throw std::runtime_error("This resource should never get created because we don't ask for it");
+	}
+	using FakeResource = DepsNodeBuilder
+		::with_create<&createFake>
+		::with_ready_state<&Self::m_fakeReady>
+		::build;
+
 	using DepsLinks = statdeps::List<
 		// StaticDepsLink<A, B> means "A depends on B"
-		statdeps::DepsEdge<dataDepsNode, pathDepsNode>,
-		statdeps::DepsEdge<textureDepsNode, dataDepsNode>,
-		statdeps::DepsEdge<textureViewDepsNode, textureDepsNode>
+		statdeps::DepsEdge<DataResource, PathResource>,
+		statdeps::DepsEdge<TextureResource, DataResource>,
+		statdeps::DepsEdge<TextureViewResource, TextureResource>,
+		statdeps::DepsEdge<FakeResource, TextureViewResource>
 	>;
 	using DepsGraph = statdeps::DepsGraph<statdeps::List<>, DepsLinks>;
 
@@ -128,17 +138,48 @@ private:
 	void rebuild() { statdeps::rebuild(*this, DepsNode{}, DepsGraph{}); }
 };
 
-void Application2::onInit() {
-	ensureExists<textureViewDepsNode>();
-	ensureExists<textureViewDepsNode>();
+void Application::onInit() {
+	ensureExists<TextureViewResource>();
+
+	// Running a second time should not change anything
+	ensureExists<TextureViewResource>();
 }
 
-void Application2::onGui() {
-	rebuild<pathDepsNode>();
+void Application::onGui() {
+	if (ImGui::TextInput("Path", &m_path)) {
+		rebuild<PathResource>();
+	}
 }
+
+template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
+template<class... Ts> overloaded(Ts...)->overloaded<Ts...>;
+
+template <typename T>
+std::string to_string(T) { return "<unknown>"; }
+#define ReflTypeName(T) template<> std::string to_string<T>(T) { return #T; }
+ReflTypeName(Application::PathResource)
+ReflTypeName(Application::DataResource)
+ReflTypeName(Application::TextureResource)
+ReflTypeName(Application::TextureViewResource)
+ReflTypeName(Application::FakeResource)
 
 int main(int argc, char* argv[]) {
-	Application2 app;
+	using AllDependees = decltype(statdeps::allDependees(Application::TextureResource{}, Application::DepsGraph{}));
+	std::cout << "All dependees of TextureResource:" << std::endl;
+	statdeps::forEach(AllDependees{}, [](auto&& arg) { std::cout << " - " << to_string(arg) << std::endl; });
+	std::cout << std::endl;
+
+	using AllDependencies = decltype(statdeps::allDependencies(Application::TextureResource{}, Application::DepsGraph{}));
+	std::cout << "All dependencies of TextureResource:" << std::endl;
+	statdeps::forEach(AllDependencies{}, [](auto&& arg) { std::cout << " - " << to_string(arg) << std::endl; });
+	std::cout << std::endl;
+
+	using AllDependees2 = decltype(statdeps::allDependees(Application::PathResource{}, Application::DepsGraph{}));
+	std::cout << "All dependees of PathResource:" << std::endl;
+	statdeps::forEach(AllDependees2{}, [](auto&& arg) { std::cout << " - " << to_string(arg) << std::endl; });
+	std::cout << std::endl;
+
+	Application app;
 	app.onInit();
 	app.onGui();
 	return 0;
