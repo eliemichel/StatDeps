@@ -66,4 +66,25 @@ void Application::onFrame() {
 }
 ```
 
-See [`example/main.cpp`](example/main.cpp) to see how *StatDeps* addresses this issue!
+With *StatDeps*, this ends up being something like:
+
+```C++
+void Application::onInit() {
+	ensureExists<RenderLoopResource>();
+}
+
+void Application::onFrame() {
+	if (m_shouldRebuildPipeline) {
+		rebuild<BindGroupLayoutsResource>();
+		m_shouldRebuildPipeline = false;
+		m_shouldReallocateTextures = false;
+	}
+
+	if (m_shouldReallocateTextures) {
+		rebuild<TexturesResource>();
+		m_shouldReallocateTextures = false;
+	}
+}
+```
+
+Of course there is also some boilerplate for defining the dependencies between the different resources, it's not that magic. ;) See [`example/main.cpp`](example/main.cpp) to see how *StatDeps* addresses this issue!
