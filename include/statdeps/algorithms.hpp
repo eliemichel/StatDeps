@@ -29,6 +29,9 @@ constexpr auto append(List<Items...>, NewItem) noexcept;
 template <typename... Items, typename... OtherItems>
 constexpr auto concat(List<Items...>, List<OtherItems...>) noexcept;
 
+template <typename... Items>
+constexpr auto revert(List<Items...>) noexcept;
+
 #pragma endregion
 
 ////////////////////////////////////////////////////
@@ -131,7 +134,7 @@ constexpr auto prepend(NewItem, List<Items...>) noexcept {
 
 template <typename NewItem, typename... Items>
 constexpr auto append(List<Items...>, NewItem) noexcept {
-	return List<NewItem, Items...>{};
+	return List<Items..., NewItem>{};
 }
 
 // concat()
@@ -139,6 +142,18 @@ constexpr auto append(List<Items...>, NewItem) noexcept {
 template <typename... Items, typename... OtherItems>
 constexpr auto concat(List<Items...>, List<OtherItems...>) noexcept {
 	return List<Items..., OtherItems...>{};
+}
+
+// revert()
+
+template <typename FirstItem, typename... Items>
+constexpr auto revert(List<FirstItem, Items...>) noexcept {
+	return append(revert(List<Items...>{}), FirstItem{});
+}
+
+template <>
+constexpr auto revert(List<>) noexcept {
+	return List<>{};
 }
 
 #pragma endregion
@@ -243,7 +258,7 @@ constexpr void ensureDependenciesExist(typename Context& ctx, Node, Graph, List<
 
 template <typename Context, typename Node, typename Graph>
 constexpr void rebuild(typename Context& ctx, Node, Graph) noexcept {
-	rebuild(ctx, Node{}, Graph{}, allDependees(Node{}, Graph{}));
+	rebuild(ctx, Node{}, Graph{}, revert(allDependees(Node{}, Graph{})));
 }
 
 template <typename Context, typename Node, typename Graph, typename FirstDependee, typename... OtherDependees>

@@ -97,7 +97,7 @@ Of course there is also some boilerplate for defining the dependencies between t
 
 In a nutshell, the user defines some "Dependency Node" types like this one, which specify how to create/destroy/check existence of a resource:
 
-```
+```C++
 using TextureResource = DepsNodeBuilder
 	::with_create<&createTexture>
 	::with_destroy<&destroyTexture>
@@ -107,7 +107,7 @@ using TextureResource = DepsNodeBuilder
 
 Then one specifies the dependencies:
 
-```
+```C++
 using DepsLinks = List<
 	DepsEdge<TextureResource, DataResource>,
 	DepsEdge<TextureViewResource, TextureResource>,

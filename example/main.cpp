@@ -1,65 +1,32 @@
+#include "mock-types.h"
+
 #include <statdeps/statdeps.hpp>
 
 #include <string>
 #include <vector>
-#include <utility>
 #include <iostream>
 #include <functional>
-#include <variant>
 
-// Mock classes
-
-namespace glm {
-struct uvec2 {
-	uint32_t x;
-	uint32_t y;
-};
-} // namespace glm
-
-namespace wgpu {
-struct Texture {
-	glm::uvec2 size;
-};
-struct TextureView {};
-} // namespace wgpu
-
-namespace ImGui {
-bool TextInput(const std::string& label, std::string* data) {
-	return true;
-}
-} // namespace ImGui
-
-std::pair<std::vector<uint8_t>,glm::uvec2> readImageFile(const std::string& path) {
-	std::cout << "Read image file from '" << path << "'" << std::endl;
-	glm::uvec2 size = { 100, 100 };
-	std::vector<uint8_t> data(size.x * size.y);
-	return { data, size };
-}
-wgpu::Texture createTexture(const glm::uvec2& size) {
-	std::cout << "Create texture with size (" << size.x << ", " << size.y << ")" << std::endl;
-	return { size };
-}
-void destroyTexture(wgpu::Texture texture) {
-	std::cout << "Destroy texture with size (" << texture.size.x << ", " << texture.size.y << ")" << std::endl;
-}
-void uploadData(wgpu::Texture texture, const std::vector<uint8_t>& data) {
-	std::cout << "Upload texture data" << std::endl;
-}
-wgpu::TextureView createTextureView(wgpu::Texture texture) {
-	std::cout << "Create texture view with size (" << texture.size.x << ", " << texture.size.y << ")" << std::endl;
-	return {};
-}
-void destroyTextureView(wgpu::TextureView textureView) {
-	std::cout << "Destroy texture view" << std::endl;
-}
-
+/**
+ * An example of application loosly inspired on a skeleton of WebGPU app, which
+ * is a case where there are a lot of inter-entity dependencies.
+ */
 class Application {
 public:
+	/**
+	 * Make sure that everything we need is initialized, namely in this example
+	 * the textureView supposedly used for rendering.
+	 */
 	void onInit();
+
+	/**
+	 * Listen for changes in the input data, triggering the recreation of some
+	 * resources if necessary.
+	 */
 	void onGui();
 
 private:
-	std::string m_path;
+	std::string m_path = "some/file.jpg";
 	glm::uvec2 m_size;
 	std::vector<uint8_t> m_data;
 	bool m_dataReady = false;
@@ -70,9 +37,17 @@ private:
 	bool m_fakeReady = false;
 
 public:
-	using Self = Application;
-	using DepsNodeBuilder = statdeps::DepsNodeBuilder::with_context<Self>;
+	/**
+	 * The builder pattern allows to easily create an alias with some default
+	 * options, here we make sure all dependency nodes use the Application as
+	 * context.
+	 */
+	using DepsNodeBuilder = statdeps::DepsNodeBuilder::with_context<Application>;
 
+	/**
+	 * In the most simple case, a resource is just an abstract node in the
+	 * dependency graph.
+	 */
 	using PathResource = DepsNodeBuilder::build;
 
 	void createData() {
@@ -81,12 +56,23 @@ public:
 		m_size = size;
 	}
 	void destroyData() {
+		std::cout << "Clear data" << std::endl;
 		m_data.clear();
 	}
+
+	/**
+	 * More often, a dependency node is labelled with a mean to create and destroy
+	 * the associated resource (defined just above).
+	 *
+	 * The dependency graph also needs a boolean where to store whether the
+	 * resource has been created or not (alternatively, we can manage this
+	 * ourselves in create/destroy and provide a "exists" callback that tells
+	 * whether the resource is initialized).
+	 */
 	using DataResource = DepsNodeBuilder
 		::with_create<&createData>
 		::with_destroy<&destroyData>
-		::with_ready_state<&Self::m_dataReady>
+		::with_ready_state<&Application::m_dataReady>
 		::build;
 
 	void createTextureA() {
@@ -96,10 +82,14 @@ public:
 	void destroyTextureA() {
 		destroyTexture(m_texture);
 	}
+
+	/**
+	 * TODO: add a way not to reallocate the texture when the size did not change.
+	 */
 	using TextureResource = DepsNodeBuilder
 		::with_create<&createTextureA>
 		::with_destroy<&destroyTextureA>
-		::with_ready_state<&Self::m_textureReady>
+		::with_ready_state<&Application::m_textureReady>
 		::build;
 
 	void createTextureViewA() {
@@ -111,17 +101,26 @@ public:
 	using TextureViewResource = DepsNodeBuilder
 		::with_create<&createTextureViewA>
 		::with_destroy<&destroyTextureViewA>
-		::with_ready_state<&Self::m_textureViewReady>
+		::with_ready_state<&Application::m_textureViewReady>
 		::build;
 
+	/**
+	 * In order to check that the automatic dependency update does not create
+	 * unused resources, we define here a dependency node that is never
+	 * required later in the code, and should hence never gets created.
+	 */
 	void createFake() {
 		throw std::runtime_error("This resource should never get created because we don't ask for it");
 	}
 	using FakeResource = DepsNodeBuilder
 		::with_create<&createFake>
-		::with_ready_state<&Self::m_fakeReady>
+		::with_ready_state<&Application::m_fakeReady>
 		::build;
 
+	/**
+	 * Finally we list the dependencies between nodes.
+	 * TODO: Make the example a bit more interesting, with diamond graph etc.
+	 */
 	using DepsLinks = statdeps::List<
 		// StaticDepsLink<A, B> means "A depends on B"
 		statdeps::DepsEdge<DataResource, PathResource>,
@@ -131,7 +130,10 @@ public:
 	>;
 	using DepsGraph = statdeps::DepsGraph<statdeps::List<>, DepsLinks>;
 
-	// Utility aliases
+	/**
+	 * Utility aliases to pass the current object as the context when
+	 * creating/destroying resources.
+	 */
 	template <typename DepsNode>
 	void ensureExists() { statdeps::ensureExists(*this, DepsNode{}, DepsGraph{}); }
 	template <typename DepsNode>
@@ -139,44 +141,53 @@ public:
 };
 
 void Application::onInit() {
+	std::cout << "* Init" << std::endl;
+	// Initialize the texture view, and recursively all its dependencies before it.
 	ensureExists<TextureViewResource>();
 
+	std::cout << "* Init again" << std::endl;
 	// Running a second time should not change anything
 	ensureExists<TextureViewResource>();
 }
 
 void Application::onGui() {
 	if (ImGui::TextInput("Path", &m_path)) {
+		std::cout << "* Change texture path, same texture size" << std::endl;
+		// Destroy and re-create the path resource, and as a consequence destroy and
+		// re-create all its existing dependees.
 		rebuild<PathResource>();
 	}
+
+	// Simulate a change of texture size
+	std::cout << "* Change texture path, different size" << std::endl;
+	m_path = "another/file.png";
+	rebuild<PathResource>();
 }
 
-template<class... Ts> struct overloaded : Ts... { using Ts::operator()...; };
-template<class... Ts> overloaded(Ts...)->overloaded<Ts...>;
-
+// A simple type to string conversion, to demo dependency walking
 template <typename T>
-std::string to_string(T) { return "<unknown>"; }
-#define ReflTypeName(T) template<> std::string to_string<T>(T) { return #T; }
-ReflTypeName(Application::PathResource)
-ReflTypeName(Application::DataResource)
-ReflTypeName(Application::TextureResource)
-ReflTypeName(Application::TextureViewResource)
-ReflTypeName(Application::FakeResource)
+std::string type_name(T) { return "<unknown>"; }
+#define registerTypeName(T) template<> std::string type_name<T>(T) { return #T; }
+registerTypeName(Application::PathResource)
+registerTypeName(Application::DataResource)
+registerTypeName(Application::TextureResource)
+registerTypeName(Application::TextureViewResource)
+registerTypeName(Application::FakeResource)
 
 int main(int argc, char* argv[]) {
 	using AllDependees = decltype(statdeps::allDependees(Application::TextureResource{}, Application::DepsGraph{}));
 	std::cout << "All dependees of TextureResource:" << std::endl;
-	statdeps::forEach(AllDependees{}, [](auto&& arg) { std::cout << " - " << to_string(arg) << std::endl; });
+	statdeps::forEach(AllDependees{}, [](auto&& arg) { std::cout << " - " << type_name(arg) << std::endl; });
 	std::cout << std::endl;
 
 	using AllDependencies = decltype(statdeps::allDependencies(Application::TextureResource{}, Application::DepsGraph{}));
 	std::cout << "All dependencies of TextureResource:" << std::endl;
-	statdeps::forEach(AllDependencies{}, [](auto&& arg) { std::cout << " - " << to_string(arg) << std::endl; });
+	statdeps::forEach(AllDependencies{}, [](auto&& arg) { std::cout << " - " << type_name(arg) << std::endl; });
 	std::cout << std::endl;
 
 	using AllDependees2 = decltype(statdeps::allDependees(Application::PathResource{}, Application::DepsGraph{}));
 	std::cout << "All dependees of PathResource:" << std::endl;
-	statdeps::forEach(AllDependees2{}, [](auto&& arg) { std::cout << " - " << to_string(arg) << std::endl; });
+	statdeps::forEach(AllDependees2{}, [](auto&& arg) { std::cout << " - " << type_name(arg) << std::endl; });
 	std::cout << std::endl;
 
 	Application app;
